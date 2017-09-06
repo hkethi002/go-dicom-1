@@ -1,6 +1,6 @@
 // Package main is a script that reads a filesystem full of dcm files and
 // generates a json report.
-package main
+package dcmdump
 
 import (
 	"encoding/binary"
@@ -8,14 +8,14 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	// "strconv"
+	fp "path/filepath"
 	"log"
 	"strings"
+	"errors"
 
 	"github.com/davidgamba/go-dicom/dcmdump/tag"
 	"github.com/davidgamba/go-dicom/dcmdump/ts"
 	vri "github.com/davidgamba/go-dicom/dcmdump/vr"
-	"github.com/davidgamba/go-getoptions"
 )
 
 var debug bool
@@ -28,7 +28,7 @@ func debugf(format string, a ...interface{}) (n int, err error) {
 }
 func debugln(a ...interface{}) (n int, err error) {
 	if debug {
-		return fmt.Println(a...)
+		return // fmt.Println(a...)
 	}
 	return 0, nil
 }
@@ -62,6 +62,23 @@ type DataElement struct {
 	Len      uint32
 	Data     []byte
 	PartOfSQ bool
+}
+
+// DicomFile -
+type DicomFile struct {
+	Elements []DataElement
+}
+
+// Look up element by tag string
+func (file *DicomFile) LookupElement(name string) (*DataElement, error) {
+
+	for _, elem := range file.Elements {
+		if elem.TagStr == name {
+			return &elem, nil
+		}
+	}
+
+	return nil, errors.New("Could not find tag in dicom dictionary")
 }
 
 // String -
@@ -198,11 +215,12 @@ func (de *DataElement) stringData() string {
 	}
 }
 
-func parseDataElement(bytes []byte, n int, explicit bool, limit int) {
+func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataElement{
 	l := len(bytes)
 	log.Printf("parseDataElement of size: %d, start possition: %d, limit %d", l, n, limit)
 	// Data element
 	m := n
+	elements := make([]DataElement,0)
 	for n <= l && m+4 <= l && n <= limit && m+4 <= limit {
 		undefinedLen := false
 		de := DataElement{N: n}
@@ -219,7 +237,7 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) {
 		if tagStr == "" {
 			log.Printf("%d Empty Tag: %s\n", n, tagStr)
 		} else if _, ok := tag.Tag[tagStr]; !ok {
-			fmt.Fprintf(os.Stderr, "INFO: %d Missing tag '%s'\n", n, tagStr)
+			// fmt.Fprintf(os.Stderr, "INFO: %d Missing tag '%s'\n", n, tagStr)
 		} else {
 			log.Printf("Tag Name: %s\n", tag.Tag[tagStr]["name"])
 		}
@@ -234,13 +252,13 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) {
 			vr = string(bytes[n:m])
 			if _, ok := vri.VR[vr]; !ok {
 				if bytes[n] == 0x0 && bytes[n+1] == 0x0 {
-					fmt.Fprintf(os.Stderr, "INFO: Blank VR\n")
+					// fmt.Fprintf(os.Stderr, "INFO: Blank VR\n")
 					vr = "00"
 					de.VRStr = "00"
 				} else {
-					fmt.Fprintf(os.Stderr, "ERROR: %d Missing VR '%s'\n", n, vr)
+					// fmt.Fprintf(os.Stderr, "ERROR: %d Missing VR '%s'\n", n, vr)
 					printBytes(bytes[n:limit])
-					return
+					return elements
 				}
 			}
 			n = m
@@ -299,9 +317,9 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) {
 				} else {
 					m++
 					if m >= l {
-						fmt.Fprintf(os.Stderr, "ERROR: Couldn't find SequenceDelimitationItem\n")
+						// fmt.Fprintf(os.Stderr, "ERROR: Couldn't find SequenceDelimitationItem\n")
 						printBytes(bytes[n:l])
-						return
+						return elements
 					}
 				}
 			}
@@ -312,28 +330,30 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) {
 		printBytes(bytes[n:m])
 		if de.TagStr == "FFFEE000" {
 			de.Data = []byte{}
-			fmt.Println(de.String())
+			// fmt.Println(de.String())
 			log.Printf("parseDataElement Item %d %d", n, m)
 			printBytes(bytes[n:m])
 			parseDataElement(bytes, n, true, m)
 			log.Printf("parseDataElement Item Complete")
 		} else if vr == "SQ" {
 			de.Data = []byte{}
-			fmt.Println(de.String())
+			// fmt.Println(de.String())
 			log.Printf("parseDataElement SQ %d %d", n, m)
 			printBytes(bytes[n:m])
 			parseDataElement(bytes, n, false, m)
 			log.Printf("parseDataElement SQ Complete")
 		} else {
 			de.Data = bytes[n:m]
-			fmt.Println(de.String())
+			// fmt.Println(de.String())
 		}
 		if undefinedLen {
 			m += 8
 		}
 		n = m
+		elements = append(elements, de)
 	}
 	log.Printf("parseDataElement Complete")
+	return elements
 }
 
 func parseSQDataElements(bytes []byte, n int, explicit bool) int {
@@ -351,7 +371,7 @@ func parseSQDataElements(bytes []byte, n int, explicit bool) int {
 		de.TagStr = tagString(t)
 		log.Printf("n: %d, Tag: %X -> %s\n", n, t, tagStr)
 		if _, ok := tag.Tag[tagStr]; !ok {
-			fmt.Fprintf(os.Stderr, "ERROR: %d Missing tag '%s'\n", n, tagStr)
+			// fmt.Fprintf(os.Stderr, "ERROR: %d Missing tag '%s'\n", n, tagStr)
 		}
 		// if _, ok := tag.Tag[tagStr]; ok && tag.Tag[tagStr]["name"] == "ItemDelimitationItem" {
 		// 	sequenceDelimitationItem = true
@@ -375,7 +395,7 @@ func parseSQDataElements(bytes []byte, n int, explicit bool) int {
 				m++
 			}
 		}
-		fmt.Println(de.String())
+		// fmt.Println(de.String())
 	}
 	log.Printf("parseSQDataElement Complete")
 	return n
@@ -387,33 +407,30 @@ func synopsis() {
 	fmt.Fprintln(os.Stderr, synopsis)
 }
 
-func main() {
+func fileWalker(files *[]DicomFile) func(string, os.FileInfo, error) error {
+	return func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			panic(err)
+		}
 
-	var file string
-	opt := getoptions.New()
-	opt.Bool("help", false)
-	opt.BoolVar(&debug, "debug", false)
-	remaining, err := opt.Parse(os.Args[1:])
+		// don't parse nested directories
+		if info.IsDir() {
+			fmt.Println("\tFrom", path)
+		}
+
+		// not a DICOM file
+		if fp.Ext(info.Name()) == ".dcm" {
+			*files = append(*files, processFile(path))
+		}
+
+
+		return err
+	}
+}
+func processFile(path string) DicomFile{
+	bytes, err := ioutil.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %s\n", err)
-		os.Exit(1)
-	}
-	if opt.Called("help") {
-		synopsis()
-		os.Exit(1)
-	}
-	if len(remaining) < 1 {
-		fmt.Fprintf(os.Stderr, "ERROR: Missing file\n")
-		synopsis()
-		os.Exit(1)
-	}
-	file = remaining[0]
-	if !debug {
-		log.SetOutput(ioutil.Discard)
-	}
-	bytes, err := ioutil.ReadFile(file)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: failed to read file: '%s'\n", err)
+		// fmt.Fprintf(os.Stderr, "ERROR: failed to read file: '%s'\n", err)
 		os.Exit(1)
 	}
 
@@ -426,6 +443,28 @@ func main() {
 	n = m
 
 	explicit := true
+	di := DicomFile{}
+	di.Elements = parseDataElement(bytes, n, explicit, len(bytes))
+	return di
+}
 
-	parseDataElement(bytes, n, explicit, len(bytes))
+func dcmDump (folder string) []DicomFile {
+
+	all_files := make([]DicomFile, 0)
+	log.SetOutput(ioutil.Discard)
+	err := fp.Walk(folder, fileWalker(&all_files))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(len(all_files))
+
+	_,err = all_files[1].LookupElement("0020000D")
+	if err != nil {
+		fmt.Println("No UID Data")
+	}
+	// for _, e := range all_files[0].Elements {
+	// 	fmt.Println(e.TagStr)
+	// }
+	return all_files
+
 }
