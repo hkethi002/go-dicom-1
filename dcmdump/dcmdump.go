@@ -56,6 +56,7 @@ type DataElement struct {
 	TagGroup []byte // [2]byte
 	TagElem  []byte // [2]byte
 	TagStr   string
+	Name 	 string
 	VR       []byte // [2]byte
 	VRStr    string
 	VRLen    int
@@ -70,11 +71,16 @@ type DicomFile struct {
 	Path string
 }
 
-// Look up element by tag string
+// Look up element by tag string or Name
 func (file *DicomFile) LookupElement(name string) (*DataElement, error) {
 
 	for _, elem := range file.Elements {
 		if elem.TagStr == name {
+			return &elem, nil
+		}
+	}
+	for _, elem := range file.Elements {
+		if elem.Name == name {
 			return &elem, nil
 		}
 	}
@@ -244,6 +250,7 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 			// fmt.Fprintf(os.Stderr, "INFO: %d Missing tag '%s'\n", n, tagStr)
 		} else {
 			log.Printf("Tag Name: %s\n", tag.Tag[tagStr]["name"])
+			de.Name = tag.Tag[tagStr]["name"]
 		}
 		var len uint32
 		var vr string
