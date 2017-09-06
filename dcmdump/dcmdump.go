@@ -67,6 +67,7 @@ type DataElement struct {
 // DicomFile -
 type DicomFile struct {
 	Elements []DataElement
+	Path string
 }
 
 // Look up element by tag string
@@ -161,6 +162,9 @@ func printBytes(b []byte) {
 		}
 	}
 	fmt.Printf("\n")
+}
+func (de *DataElement) StringData() string {
+	return de.stringData()
 }
 
 func (de *DataElement) stringData() string {
@@ -444,11 +448,12 @@ func processFile(path string) DicomFile{
 
 	explicit := true
 	di := DicomFile{}
+	di.Path = path
 	di.Elements = parseDataElement(bytes, n, explicit, len(bytes))
 	return di
 }
 
-func dcmDump (folder string) []DicomFile {
+func DcmDump (folder string) []DicomFile {
 
 	all_files := make([]DicomFile, 0)
 	log.SetOutput(ioutil.Discard)
