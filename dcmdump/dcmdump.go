@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	fp "path/filepath"
 	"log"
 	"strings"
 	"errors"
@@ -19,6 +18,7 @@ import (
 )
 
 var debug bool
+var ErrNotDICM = errors.New("Not a Dicom File")
 
 func debugf(format string, a ...interface{}) (n int, err error) {
 	if debug {
@@ -418,65 +418,79 @@ func synopsis() {
 	fmt.Fprintln(os.Stderr, synopsis)
 }
 
-func fileWalker(files *[]DicomFile) func(string, os.FileInfo, error) error {
-	return func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			panic(err)
-		}
+// func fileWalker(files *[]DicomFile) func(string, os.FileInfo, error) error {
+// 	return func(path string, info os.FileInfo, err error) error {
+// 		if err != nil {
+// 			panic(err)
+// 		}
 
-		// don't parse nested directories
-		if info.IsDir() {
-			fmt.Println("\tFrom", path)
-		}
+// 		// don't parse nested directories
+// 		if info.IsDir() {
+// 			fmt.Println("\tFrom", path)
+// 		} else {
 
-		// not a DICOM file
-		if fp.Ext(info.Name()) == ".dcm" {
-			*files = append(*files, processFile(path))
-		}
+// 			file, err := processFile(path)
+// 			if err != nil {
+// 				// not a DICOM file
+// 				if err == ErrNotDICM {
+// 					return nil
+// 				} 
+// 				return err
+// 			}
+// 			*files = append(*files, file)
+// 		}
 
 
-		return err
-	}
-}
-func processFile(path string) DicomFile{
-	bytes, err := ioutil.ReadFile(path)
-	if err != nil {
-		// fmt.Fprintf(os.Stderr, "ERROR: failed to read file: '%s'\n", err)
-		os.Exit(1)
-	}
+// 		return err
+// 	}
+// }
+// func processFile(path string) (DicomFile, error) {
+// 	di := DicomFile{}
+// 	bytes, err := ioutil.ReadFile(path)
+// 	if err != nil {
+// 		// fmt.Fprintf(os.Stderr, "ERROR: failed to read file: '%s'\n", err)
+// 		return di, err
+// 	}
 
-	// Intro
-	n := 128
-	printBytes(bytes[0:n])
-	// DICM
-	m := n + 4
-	printBytes(bytes[n:m])
-	n = m
+// 	// Intro
+// 	n := 128
+// 	// DICM
+// 	m := n + 4
 
-	explicit := true
-	di := DicomFile{}
-	di.Path = path
-	di.Elements = parseDataElement(bytes, n, explicit, len(bytes))
-	return di
-}
+// 	explicit := true
+// 	di.Path = path
+// 	if string(bytes[n:m]) == "DICM" {
+// 		err = di.ProcessFile(bytes, m, explicit)
+// 		if err != nil {
+// 			return di, err
+// 		}
+// 		return di, nil
+// 	}
+// 	return di, ErrNotDICM
+// }
 
-func DcmDump (folder string) []DicomFile {
-
-	all_files := make([]DicomFile, 0)
+func (di *DicomFile) ProcessFile(bytes []byte, m int, explicit bool) {
 	log.SetOutput(ioutil.Discard)
-	err := fp.Walk(folder, fileWalker(&all_files))
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(len(all_files))
-
-	_,err = all_files[1].LookupElement("0020000D")
-	if err != nil {
-		fmt.Println("No UID Data")
-	}
-	// for _, e := range all_files[0].Elements {
-	// 	fmt.Println(e.TagStr)
-	// }
-	return all_files
-
+	di.Elements = parseDataElement(bytes, m, explicit, len(bytes))
 }
+
+// func DcmDump (folder string) ([]DicomFile, err) {
+
+	// all_files := make([]DicomFile, 0)
+	// log.SetOutput(ioutil.Discard)
+	// err := fp.Walk(folder, fileWalker(&all_files))
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Println(len(all_files))
+
+	// _,err = all_files[1].LookupElement("0020000D")
+	// if err != nil {
+	// 	fmt.Println("No UID Data")
+	// }
+	// // for _, e := range all_files[0].Elements {
+	// // 	fmt.Println(e.TagStr)
+	// // }
+	// return all_files
+
+// }
