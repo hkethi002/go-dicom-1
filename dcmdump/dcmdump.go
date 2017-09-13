@@ -248,7 +248,6 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 		var len uint32
 		var vr string
 		if explicit {
-			debugf("%d VR\n", n)
 			m += 2
 			de.VR = bytes[n:m]
 			de.VRStr = string(bytes[n:m])
@@ -274,22 +273,18 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 				vr == "UR" ||
 				vr == "UT" ||
 				vr == "UN" {
-				debugln("Reserved")
 				m += 2
 				n = m
-				debugln("Lenght")
 				m += 4
 				len = binary.LittleEndian.Uint32(bytes[n:m])
 				n = m
 			} else {
-				debugln("Lenght")
 				m += 2
 				len16 := binary.LittleEndian.Uint16(bytes[n:m])
 				len = uint32(len16)
 				n = m
 			}
 		} else {
-			debugln("Lenght")
 			m += 4
 			len = binary.LittleEndian.Uint32(bytes[n:m])
 			n = m
