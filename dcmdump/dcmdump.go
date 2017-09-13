@@ -317,7 +317,9 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 		de.Len = len
 		debugf("Lenght: %d\n", len)
 		m += int(len)
-		if de.TagStr == "FFFEE000" {
+		if de.TagStr == "7FE00010" {
+			de.Data = []byte{}
+		} else if de.TagStr == "FFFEE000" {
 			de.Data = []byte{}
 			// fmt.Println(de.String())
 			parseDataElement(bytes, n, true, m)
@@ -326,13 +328,18 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 			// fmt.Println(de.String())
 			parseDataElement(bytes, n, false, m)
 		} else {
-			de.Data = bytes[n:m]
+			if m < limit && m < l {
+				de.Data = bytes[n:m]
+			}
 			// fmt.Println(de.String())
 		}
 		if undefinedLen {
 			m += 8
 		}
 		n = m
+		// if de.Name != "PixelData"{
+		// 	elements = append(elements, de)
+		// }
 		elements = append(elements, de)
 	}
 	return elements
