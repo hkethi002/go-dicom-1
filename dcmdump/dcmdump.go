@@ -343,9 +343,12 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 			de.Data = []byte{}
 			// fmt.Println(de.String())
 			parseDataElement(path, n, false, m)
-		} else {
+		} else if stringInSlice(de.TagStr) {
 			if m < limit && m < l {
 				de.Data = readNbytes(dfile, m-n, n)
+			}
+			if de.TagStr == "0020000E" {
+				m = l
 			}
 			// fmt.Println(de.String())
 		}
@@ -356,10 +359,32 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 		// if de.Name != "PixelData"{
 		// 	elements = append(elements, de)
 		// }
-		elements = append(elements, de)
+		if stringInSlice(de.TagStr) {
+			elements = append(elements, de)
+		}
 	}
 	dfile.Close()
 	return elements
+}
+
+func stringInSlice(a string) bool {
+	list := []string{
+		"0020000D",
+		"0020000E",
+		"00080020",
+		"00080021",
+		"00080030",
+		"00080031",
+		"00081030",
+		"0008103E",
+		"00100020",
+	}
+    for _, b := range list {
+        if b == a {
+            return true
+        }
+    }
+    return false
 }
 
 // func parseSQDataElements(bytes []byte, n int, explicit bool) int {
