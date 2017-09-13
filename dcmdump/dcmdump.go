@@ -5,7 +5,6 @@ package dcmdump
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"errors"
@@ -104,21 +103,21 @@ func (de *DataElement) String() string {
 
 type fh os.File
 
-func readNBytes(f *os.File, size int) ([]byte, error) {
-	data := make([]byte, size)
-	for {
-		data = data[:cap(data)]
-		n, err := f.Read(data)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return nil, err
-		}
-		data = data[:n]
-	}
-	return data, nil
-}
+// func readNBytes(f *os.File, size int) ([]byte, error) {
+// 	data := make([]byte, size)
+// 	for {
+// 		data = data[:cap(data)]
+// 		n, err := f.Read(data)
+// 		if err != nil {
+// 			if err == io.EOF {
+// 				break
+// 			}
+// 			return nil, err
+// 		}
+// 		data = data[:n]
+// 	}
+// 	return data, nil
+// }
 
 // http://rosettacode.org/wiki/Strip_control_codes_and_extended_characters_from_a_string#Go
 // two UTF-8 functions identical except for operator comparing c to 127
@@ -223,18 +222,34 @@ func (de *DataElement) stringData() string {
 	}
 }
 
-func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataElement{
-	l := len(bytes)
+func readNbytes (f *os.File, size int, off int) ([]byte) {
+	buff := make([]byte, size)
+	n, err := f.ReadAt(buff, int64(off))
+	if err != nil {
+		panic(err)
+	} else if n != size {
+		panic(errors.New("didn't read correct amount"))
+	}
+	return buff
+}
+
+func parseDataElement(path string, n int, explicit bool, limit int) []DataElement{
+	l := limit
 	// Data element
 	m := n
 	elements := make([]DataElement,0)
+	dfile, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+
 	for n <= l && m+4 <= l && n <= limit && m+4 <= limit {
 		undefinedLen := false
 		de := DataElement{N: n}
 		m += 4
-		t := bytes[n:m]
-		de.TagGroup = bytes[n : n+2]
-		de.TagElem = bytes[n+2 : n+4]
+		t := readNbytes(dfile, 4, n)
+		de.TagGroup = readNbytes(dfile, 2, n)
+		de.TagElem = readNbytes(dfile, 2, n+2)
 		de.TagStr = tagString(t)
 		// TODO: Clean up tagString
 		tagStr := tagString(t)
@@ -249,11 +264,12 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 		var vr string
 		if explicit {
 			m += 2
-			de.VR = bytes[n:m]
-			de.VRStr = string(bytes[n:m])
-			vr = string(bytes[n:m])
+			vr_byte := readNbytes(dfile, 2, n)
+			de.VR = vr_byte
+			de.VRStr = string(vr_byte)
+			vr = string(vr_byte)
 			if _, ok := vri.VR[vr]; !ok {
-				if bytes[n] == 0x0 && bytes[n+1] == 0x0 {
+				if vr_byte[0] == 0x0 && vr_byte[1] == 0x0 {
 					// fmt.Fprintf(os.Stderr, "INFO: Blank VR\n")
 					vr = "00"
 					de.VRStr = "00"
@@ -276,23 +292,23 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 				m += 2
 				n = m
 				m += 4
-				len = binary.LittleEndian.Uint32(bytes[n:m])
+				len = binary.LittleEndian.Uint32(readNbytes(dfile, m-n, n))
 				n = m
 			} else {
 				m += 2
-				len16 := binary.LittleEndian.Uint16(bytes[n:m])
+				len16 := binary.LittleEndian.Uint16(readNbytes(dfile, m-n, n))
 				len = uint32(len16)
 				n = m
 			}
 		} else {
 			m += 4
-			len = binary.LittleEndian.Uint32(bytes[n:m])
+			len = binary.LittleEndian.Uint32(readNbytes(dfile, m-n, n))
 			n = m
 		}
 		if len == 0xFFFFFFFF {
 			undefinedLen = true
 			for {
-				endTag := bytes[m : m+4]
+				endTag := readNbytes(dfile, 4, m)
 				endTagStr := tagString(endTag)
 				if de.TagStr == "FFFEE000" && endTagStr == "FFFEE00D" {
 					// FFFEE000 item
@@ -322,14 +338,14 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 		} else if de.TagStr == "FFFEE000" {
 			de.Data = []byte{}
 			// fmt.Println(de.String())
-			parseDataElement(bytes, n, true, m)
+			parseDataElement(path, n, true, m)
 		} else if vr == "SQ" {
 			de.Data = []byte{}
 			// fmt.Println(de.String())
-			parseDataElement(bytes, n, false, m)
+			parseDataElement(path, n, false, m)
 		} else {
 			if m < limit && m < l {
-				de.Data = bytes[n:m]
+				de.Data = readNbytes(dfile, m-n, n)
 			}
 			// fmt.Println(de.String())
 		}
@@ -342,46 +358,54 @@ func parseDataElement(bytes []byte, n int, explicit bool, limit int) []DataEleme
 		// }
 		elements = append(elements, de)
 	}
+	dfile.Close()
 	return elements
 }
 
-func parseSQDataElements(bytes []byte, n int, explicit bool) int {
-	l := len(bytes)
-	m := n
-	for n <= l && m+4 <= l {
-		de := DataElement{N: n}
-		m := n + 4
-		t := bytes[n:m]
-		tagStr := tagString(t)
-		de.TagGroup = bytes[n : n+2]
-		de.TagElem = bytes[n+2 : n+4]
-		de.TagStr = tagString(t)
-		if _, ok := tag.Tag[tagStr]; !ok {
-			// fmt.Fprintf(os.Stderr, "ERROR: %d Missing tag '%s'\n", n, tagStr)
-		}
-		// if _, ok := tag.Tag[tagStr]; ok && tag.Tag[tagStr]["name"] == "ItemDelimitationItem" {
-		// 	sequenceDelimitationItem = true
-		// }
-		for m <= l {
-			// Find FFFEE00D: ItemDelimitationItem
-			endTag := bytes[m : m+4]
-			endTagStr := tagString(endTag)
-			if endTagStr == "FFFEE00D" {
-				debugln("Item Delim found")
-				de.Data = bytes[n:m]
-				m += 4
-				n = m
-				// m += 4
-				// n = m
-				break
-			} else {
-				m++
-			}
-		}
-	}
-	return n
-}
+// func parseSQDataElements(bytes []byte, n int, explicit bool) int {
+// 	l := len(bytes)
+// 	m := n
+// 	for n <= l && m+4 <= l {
+// 		de := DataElement{N: n}
+// 		m := n + 4
+// 		t := bytes[n:m]
+// 		tagStr := tagString(t)
+// 		de.TagGroup = bytes[n : n+2]
+// 		de.TagElem = bytes[n+2 : n+4]
+// 		de.TagStr = tagString(t)
+// 		if _, ok := tag.Tag[tagStr]; !ok {
+// 			// fmt.Fprintf(os.Stderr, "ERROR: %d Missing tag '%s'\n", n, tagStr)
+// 		}
+// 		// if _, ok := tag.Tag[tagStr]; ok && tag.Tag[tagStr]["name"] == "ItemDelimitationItem" {
+// 		// 	sequenceDelimitationItem = true
+// 		// }
+// 		for m <= l {
+// 			// Find FFFEE00D: ItemDelimitationItem
+// 			endTag := bytes[m : m+4]
+// 			endTagStr := tagString(endTag)
+// 			if endTagStr == "FFFEE00D" {
+// 				debugln("Item Delim found")
+// 				de.Data = bytes[n:m]
+// 				m += 4
+// 				n = m
+// 				// m += 4
+// 				// n = m
+// 				break
+// 			} else {
+// 				m++
+// 			}
+// 		}
+// 	}
+// 	return n
+// }
 
-func (di *DicomFile) ProcessFile(bytes []byte, m int, explicit bool) {
-	di.Elements = parseDataElement(bytes, m, explicit, len(bytes))
+func (di *DicomFile) ProcessFile(path string, m int, explicit bool) error {
+	fi, err := os.Stat(path);
+	if err != nil {
+	    return err
+	}
+	// get the size
+	size := fi.Size()
+	di.Elements = parseDataElement(path, m, explicit, int(size))
+	return nil
 }
