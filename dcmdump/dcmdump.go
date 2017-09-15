@@ -222,34 +222,37 @@ func (de *DataElement) stringData() string {
 	}
 }
 
-func readNbytes (f *os.File, size int, off int) ([]byte) {
+func readNbytes (f *os.File, size int, off int) ([]byte, error) {
 	buff := make([]byte, size)
 	n, err := f.ReadAt(buff, int64(off))
 	if err != nil {
-		panic(err)
+		return buff, err
 	} else if n != size {
-		panic(errors.New("didn't read correct amount"))
+		return buff, errors.New("Number of read byte does not equal given size")
 	}
-	return buff
+	return buff, nil
 }
 
-func parseDataElement(path string, n int, explicit bool, limit int) []DataElement{
+func parseDataElement(path string, n int, explicit bool, limit int, tags []string) ([]DataElement, error) {
 	l := limit
 	// Data element
 	m := n
 	elements := make([]DataElement,0)
 	dfile, err := os.Open(path)
 	if err != nil {
-		panic(err)
+		return elements, err
 	}
 
 	for n <= l && m+4 <= l && n <= limit && m+4 <= limit {
 		undefinedLen := false
 		de := DataElement{N: n}
 		m += 4
-		t := readNbytes(dfile, 4, n)
-		de.TagGroup = readNbytes(dfile, 2, n)
-		de.TagElem = readNbytes(dfile, 2, n+2)
+		t, err := readNbytes(dfile, 4, n)
+		if err != nil {
+			return elements, err
+		}
+		de.TagGroup = t[:2]
+		de.TagElem = t[2:]
 		de.TagStr = tagString(t)
 		// TODO: Clean up tagString
 		tagStr := tagString(t)
@@ -264,7 +267,10 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 		var vr string
 		if explicit {
 			m += 2
-			vr_byte := readNbytes(dfile, 2, n)
+			vr_byte, err := readNbytes(dfile, 2, n)
+			if err != nil {
+				return elements, err
+			}
 			de.VR = vr_byte
 			de.VRStr = string(vr_byte)
 			vr = string(vr_byte)
@@ -275,7 +281,7 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 					de.VRStr = "00"
 				} else {
 					// fmt.Fprintf(os.Stderr, "ERROR: %d Missing VR '%s'\n", n, vr)
-					return elements
+					return elements, err
 				}
 			}
 			n = m
@@ -292,23 +298,38 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 				m += 2
 				n = m
 				m += 4
-				len = binary.LittleEndian.Uint32(readNbytes(dfile, m-n, n))
+				bytes, err := readNbytes(dfile, m-n, n)
+				if err != nil {
+					return elements, err
+				}
+				len = binary.LittleEndian.Uint32(bytes)
 				n = m
 			} else {
 				m += 2
-				len16 := binary.LittleEndian.Uint16(readNbytes(dfile, m-n, n))
+				bytes, err := readNbytes(dfile, m-n, n)
+				if err != nil {
+					return elements, err
+				}
+				len16 := binary.LittleEndian.Uint16(bytes)
 				len = uint32(len16)
 				n = m
 			}
 		} else {
 			m += 4
-			len = binary.LittleEndian.Uint32(readNbytes(dfile, m-n, n))
+			bytes, err := readNbytes(dfile, m-n, n)
+			if err != nil {
+				return elements, err
+			}
+			len = binary.LittleEndian.Uint32(bytes)
 			n = m
 		}
 		if len == 0xFFFFFFFF {
 			undefinedLen = true
 			for {
-				endTag := readNbytes(dfile, 4, m)
+				endTag, err := readNbytes(dfile, 4, m)
+				if err != nil {
+					return elements, err
+				}
 				endTagStr := tagString(endTag)
 				if de.TagStr == "FFFEE000" && endTagStr == "FFFEE00D" {
 					// FFFEE000 item
@@ -325,7 +346,7 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 					m++
 					if m >= l {
 						// fmt.Fprintf(os.Stderr, "ERROR: Couldn't find SequenceDelimitationItem\n")
-						return elements
+						return elements, err
 					}
 				}
 			}
@@ -338,14 +359,17 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 		} else if de.TagStr == "FFFEE000" {
 			de.Data = []byte{}
 			// fmt.Println(de.String())
-			parseDataElement(path, n, true, m)
+			parseDataElement(path, n, true, m, tags)
 		} else if vr == "SQ" {
 			de.Data = []byte{}
 			// fmt.Println(de.String())
-			parseDataElement(path, n, false, m)
-		} else if stringInSlice(de.TagStr) {
+			parseDataElement(path, n, false, m, tags)
+		} else if stringInSlice(de.TagStr, tags) {
 			if m < limit && m < l {
-				de.Data = readNbytes(dfile, m-n, n)
+				de.Data, err = readNbytes(dfile, m-n, n)
+				if err != nil {
+					return elements, err
+				}
 			}
 			if de.TagStr == "0020000E" {
 				m = l
@@ -359,27 +383,16 @@ func parseDataElement(path string, n int, explicit bool, limit int) []DataElemen
 		// if de.Name != "PixelData"{
 		// 	elements = append(elements, de)
 		// }
-		if stringInSlice(de.TagStr) {
+		if stringInSlice(de.TagStr, tags) {
 			elements = append(elements, de)
 		}
 	}
 	dfile.Close()
-	return elements
+	return elements, err
 }
 
-func stringInSlice(a string) bool {
-	list := []string{
-		"0020000D",
-		"0020000E",
-		"00080020",
-		"00080021",
-		"00080030",
-		"00080031",
-		"00081030",
-		"0008103E",
-		"00100020",
-	}
-    for _, b := range list {
+func stringInSlice(a string, tags []string) bool {
+    for _, b := range tags {
         if b == a {
             return true
         }
@@ -387,50 +400,13 @@ func stringInSlice(a string) bool {
     return false
 }
 
-// func parseSQDataElements(bytes []byte, n int, explicit bool) int {
-// 	l := len(bytes)
-// 	m := n
-// 	for n <= l && m+4 <= l {
-// 		de := DataElement{N: n}
-// 		m := n + 4
-// 		t := bytes[n:m]
-// 		tagStr := tagString(t)
-// 		de.TagGroup = bytes[n : n+2]
-// 		de.TagElem = bytes[n+2 : n+4]
-// 		de.TagStr = tagString(t)
-// 		if _, ok := tag.Tag[tagStr]; !ok {
-// 			// fmt.Fprintf(os.Stderr, "ERROR: %d Missing tag '%s'\n", n, tagStr)
-// 		}
-// 		// if _, ok := tag.Tag[tagStr]; ok && tag.Tag[tagStr]["name"] == "ItemDelimitationItem" {
-// 		// 	sequenceDelimitationItem = true
-// 		// }
-// 		for m <= l {
-// 			// Find FFFEE00D: ItemDelimitationItem
-// 			endTag := bytes[m : m+4]
-// 			endTagStr := tagString(endTag)
-// 			if endTagStr == "FFFEE00D" {
-// 				debugln("Item Delim found")
-// 				de.Data = bytes[n:m]
-// 				m += 4
-// 				n = m
-// 				// m += 4
-// 				// n = m
-// 				break
-// 			} else {
-// 				m++
-// 			}
-// 		}
-// 	}
-// 	return n
-// }
-
-func (di *DicomFile) ProcessFile(path string, m int, explicit bool) error {
+func (di *DicomFile) ProcessFile(path string, m int, explicit bool, tags []string) error {
 	fi, err := os.Stat(path);
 	if err != nil {
 	    return err
 	}
 	// get the size
 	size := fi.Size()
-	di.Elements = parseDataElement(path, m, explicit, int(size))
-	return nil
+	di.Elements, err = parseDataElement(path, m, explicit, int(size), tags)
+	return err
 }
