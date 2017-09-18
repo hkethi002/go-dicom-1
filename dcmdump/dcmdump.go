@@ -397,12 +397,16 @@ func stringInSlice(a string, tags []string) bool {
             return true
         }
     }
+    if len(tags) == 0 {
+    	return true
+    }
     return false
 }
 
 func (di *DicomFile) ProcessFile(path string, m int, explicit bool, tags []string) error {
 	fi, err := os.Stat(path);
 	if err != nil {
+
 	    return err
 	}
 	// get the size
